@@ -4,6 +4,7 @@
 pub mod commands;
 pub mod db;
 pub mod models;
+pub mod ssh;
 pub mod util;
 
 use tauri::Manager;
@@ -19,6 +20,7 @@ fn main() {
                     .expect("failed to initialize database");
                 handle.manage(pool);
             });
+            app.manage(ssh::SessionRegistry::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -27,6 +29,12 @@ fn main() {
             commands::server::update_server,
             commands::server::delete_server,
             commands::server::ping_server,
+            commands::volume::connect_server,
+            commands::volume::disconnect_server,
+            commands::volume::test_connection,
+            commands::volume::list_volumes,
+            commands::volume::get_volume_size,
+            commands::volume::check_volumes_on_dest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

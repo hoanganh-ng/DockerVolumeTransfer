@@ -908,6 +908,7 @@ dependencies = [
 name = "docker-volume-transfer"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "dirs 5.0.1",
  "russh",
  "russh-keys",
