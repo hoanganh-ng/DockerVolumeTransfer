@@ -436,7 +436,7 @@ async fn run_transfer(
             }
         }
 
-        let src_code = src_exit_status.unwrap_or(0);
+        let src_code = src_exit_status.unwrap_or(1);
         if src_code != 0 {
             let err_msg = if src_stderr.trim().is_empty() {
                 format!("Source container exited with code {}", src_code)
@@ -470,29 +470,30 @@ async fn run_transfer(
         let _ = dest_channel.eof().await;
 
         // Stage 4: Check dest exit
-        while let Some(msg) = dest_channel.wait().await {
-            match msg {
-                russh::ChannelMsg::ExtendedData { data, .. } => {
-                    dest_stderr.push_str(&String::from_utf8_lossy(&data));
-                }
-                russh::ChannelMsg::ExitStatus { exit_status } => {
+        while dest_exit_status.is_none() {
+            match tokio::time::timeout(Duration::from_secs(30), dest_channel.wait()).await {
+                Ok(Some(russh::ChannelMsg::ExitStatus { exit_status })) => {
                     dest_exit_status = Some(exit_status);
                 }
-                russh::ChannelMsg::ExitSignal { error_message, .. } => {
+                Ok(Some(russh::ChannelMsg::ExitSignal { error_message, .. })) => {
                     dest_exit_status = Some(1);
                     dest_stderr.push_str(&error_message);
                 }
-                russh::ChannelMsg::Close => {
+                Ok(Some(russh::ChannelMsg::ExtendedData { data, .. })) => {
+                    dest_stderr.push_str(&String::from_utf8_lossy(&data));
+                }
+                Ok(Some(russh::ChannelMsg::Close)) => {
                     break;
                 }
-                _ => {}
+                Ok(Some(russh::ChannelMsg::Eof)) => {}
+                _ => break,
             }
         }
 
         active_containers.remove(&src_name);
         active_containers.remove(&dst_name);
 
-        let dest_code = dest_exit_status.unwrap_or(0);
+        let dest_code = dest_exit_status.unwrap_or(1);
         if dest_code != 0 {
             let err_msg = if dest_stderr.trim().is_empty() {
                 format!("Destination container exited with code {}", dest_code)
