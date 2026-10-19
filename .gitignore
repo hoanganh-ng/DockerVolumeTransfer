@@ -9,3 +9,4 @@ dist-ssr/
 
 # Rust / Tauri
 src-tauri/target/
+target/

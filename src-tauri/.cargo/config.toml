@@ -1,0 +1,2 @@
+[build]
+rustflags = ["-L", "/tmp/local-dev/usr/lib/x86_64-linux-gnu"]
