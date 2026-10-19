@@ -1,5 +1,7 @@
 .worktrees/
 .superpowers/
+.cargo/
+src-tauri/.cargo/
 
 # Node
 node_modules/
