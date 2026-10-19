@@ -72,22 +72,31 @@ export function AddServerModal({
   const handleBrowseKey = async () => {
     try {
       const selected = await openFileDialog({
+        title: "Select SSH Private Key",
         multiple: false,
         directory: false,
       });
 
-      if (selected && typeof selected === "string") {
-        setSshKeyPath(selected);
-        if (errors.ssh_key_path) {
-          setErrors((prev) => {
-            const next = { ...prev };
-            delete next.ssh_key_path;
-            return next;
-          });
+      if (selected) {
+        const filePath = Array.isArray(selected) ? selected[0] : selected;
+        if (filePath && typeof filePath === "string") {
+          setSshKeyPath(filePath);
+          if (errors.ssh_key_path) {
+            setErrors((prev) => {
+              const next = { ...prev };
+              delete next.ssh_key_path;
+              return next;
+            });
+          }
         }
       }
     } catch (err) {
-      console.warn("Failed to open file picker:", err);
+      console.error("Failed to open file picker:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrors((prev) => ({
+        ...prev,
+        ssh_key_path: `Failed to open file picker: ${msg}`,
+      }));
     }
   };
 

@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Docker Volume Transfer",
         "width": 960,
         "height": 680,
