@@ -28,22 +28,33 @@ export function TransferProgress() {
 
   // Start transfer and listen to Tauri events
   useEffect(() => {
-    let unlistenProgress: UnlistenFn | undefined;
-    let unlistenComplete: UnlistenFn | undefined;
-    let isSubscribed = true;
+    let isMounted = true;
+    const cleanupFns: UnlistenFn[] = [];
 
     const initTransfer = async () => {
       try {
-        unlistenProgress = await listen<TransferEvent>("transfer-progress", (event) => {
-          if (!isSubscribed) return;
+        const progressUnlisten = await listen<TransferEvent>("transfer-progress", (event) => {
+          if (!isMounted) return;
           setTransferEvent(event.payload.volume_name, event.payload);
         });
+        if (!isMounted) {
+          progressUnlisten();
+        } else {
+          cleanupFns.push(progressUnlisten);
+        }
 
-        unlistenComplete = await listen<TransferSummary>("transfer-complete", (event) => {
-          if (!isSubscribed) return;
+        const completeUnlisten = await listen<TransferSummary>("transfer-complete", (event) => {
+          if (!isMounted) return;
           setTransferSummary(event.payload);
           setStep(5);
         });
+        if (!isMounted) {
+          completeUnlisten();
+        } else {
+          cleanupFns.push(completeUnlisten);
+        }
+
+        if (!isMounted) return;
 
         if (!startedRef.current) {
           startedRef.current = true;
@@ -56,7 +67,7 @@ export function TransferProgress() {
           });
         }
       } catch (err: unknown) {
-        if (!isSubscribed) return;
+        if (!isMounted) return;
         const msg =
           typeof err === "string"
             ? err
@@ -68,9 +79,9 @@ export function TransferProgress() {
     initTransfer();
 
     return () => {
-      isSubscribed = false;
-      if (unlistenProgress) unlistenProgress();
-      if (unlistenComplete) unlistenComplete();
+      isMounted = false;
+      cleanupFns.forEach((fn) => fn());
+      cleanupFns.length = 0;
     };
   }, [
     sourceServer?.name,

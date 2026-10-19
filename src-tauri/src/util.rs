@@ -14,4 +14,13 @@ mod tests {
         assert_eq!(shell_escape("vol'quote"), "'vol'\\''quote'");
         assert_eq!(shell_escape("simple"), "'simple'");
     }
+
+    #[test]
+    fn test_shell_escape_review_focus() {
+        assert_eq!(shell_escape("vol'quote"), "'vol'\\''quote'");
+        assert_eq!(shell_escape("vol with spaces"), "'vol with spaces'");
+        assert_eq!(shell_escape("my-vol.v2"), "'my-vol.v2'");
+        assert_eq!(shell_escape(""), "''");
+        assert_eq!(shell_escape("a'b'c"), "'a'\\''b'\\''c'");
+    }
 }

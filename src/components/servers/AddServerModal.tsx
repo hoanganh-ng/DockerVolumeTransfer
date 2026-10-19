@@ -56,6 +56,17 @@ export function AddServerModal({
     }
   }, [open, server]);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !showPassphraseModal) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, showPassphraseModal, onClose]);
+
   if (!open) return null;
 
   const handleBrowseKey = async () => {
@@ -105,6 +116,7 @@ export function AddServerModal({
   const handlePassphraseSubmit = async (passphrase: string) => {
     setIsTesting(true);
     setPassphraseError("");
+    setGeneralError("");
 
     const portNumber = Number(port);
 
@@ -118,9 +130,22 @@ export function AddServerModal({
         ssh_key_path: sshKeyPath.trim(),
         passphrase: passphrase ? passphrase : null,
       });
+    } catch (err: unknown) {
+      const message =
+        typeof err === "string"
+          ? err
+          : err instanceof Error
+          ? err.message
+          : "Failed to connect to server";
 
+      setPassphraseError(message);
+      setIsTesting(false);
+      return;
+    }
+
+    try {
       // Step 2: save or update server in SQLite database
-      if (server?.id) {
+      if (server?.id != null) {
         await invoke("update_server", {
           id: server.id,
           name: name.trim(),
@@ -150,9 +175,10 @@ export function AddServerModal({
           ? err
           : err instanceof Error
           ? err.message
-          : "Failed to connect to server";
+          : "Failed to save server to database";
 
-      setPassphraseError(message);
+      setShowPassphraseModal(false);
+      setGeneralError(message);
     } finally {
       setIsTesting(false);
     }
@@ -173,7 +199,7 @@ export function AddServerModal({
               id="add-server-modal-title"
               className="text-lg font-semibold text-slate-100"
             >
-              {server ? "Edit Server" : "Add Server"}
+              {server?.id != null ? "Edit Server" : "Add Server"}
             </h3>
             <button
               type="button"

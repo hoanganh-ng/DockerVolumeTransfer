@@ -243,6 +243,25 @@ pub async fn exec(session: &SshSession, command: &str) -> Result<(u32, String, S
             } => {
                 exit_status = code;
             }
+            russh::ChannelMsg::ExitSignal {
+                signal_name,
+                error_message,
+                ..
+            } => {
+                exit_status = 1;
+                let details = if error_message.is_empty() {
+                    format!("Process terminated by signal {:?}", signal_name)
+                } else {
+                    format!(
+                        "Process terminated by signal {:?}: {}",
+                        signal_name, error_message
+                    )
+                };
+                if !stderr.is_empty() && !stderr.ends_with('\n') {
+                    stderr.push('\n');
+                }
+                stderr.push_str(&details);
+            }
             _ => {}
         }
     }
@@ -260,6 +279,26 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("key") || err.contains("not found") || err.contains("No such file"));
+    }
+
+    #[tokio::test]
+    async fn test_wrong_passphrase_error_message() {
+        let temp_dir = std::env::temp_dir().join(format!("ssh_test_{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let key_path = temp_dir.join("id_test");
+
+        let status = std::process::Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "correct_pass", "-f", key_path.to_str().unwrap(), "-C", "test"])
+            .output()
+            .unwrap();
+        assert!(status.status.success());
+
+        let result = connect("127.0.0.1", 22, "user", key_path.to_str().unwrap(), "wrong_pass").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err, "Invalid passphrase for SSH key");
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 
     #[tokio::test]

@@ -38,11 +38,13 @@ export function ServerCard({
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (disabled) return;
     onEdit();
   };
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (disabled) return;
     if (window.confirm(`Delete server "${server.name}"?`)) {
       onDelete();
     }
@@ -85,8 +87,13 @@ export function ServerCard({
           <div className="flex items-center space-x-1 shrink-0">
             <button
               type="button"
+              disabled={disabled}
               onClick={handleEdit}
-              className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 rounded-md transition-colors"
+              className={`p-1.5 rounded-md transition-colors ${
+                disabled
+                  ? "opacity-30 cursor-not-allowed text-slate-600 pointer-events-none"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/60"
+              }`}
               title="Edit server"
               aria-label={`Edit ${server.name}`}
             >
@@ -94,8 +101,13 @@ export function ServerCard({
             </button>
             <button
               type="button"
+              disabled={disabled}
               onClick={handleDelete}
-              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700/60 rounded-md transition-colors"
+              className={`p-1.5 rounded-md transition-colors ${
+                disabled
+                  ? "opacity-30 cursor-not-allowed text-slate-600 pointer-events-none"
+                  : "text-slate-400 hover:text-red-400 hover:bg-slate-700/60"
+              }`}
               title="Delete server"
               aria-label={`Delete ${server.name}`}
             >

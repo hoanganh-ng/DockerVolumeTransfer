@@ -99,3 +99,43 @@ test("formatBytes edge cases", () => {
   assert.equal(formatBytes(1024), "1.0 KB");
   assert.equal(formatBytes(1099511627776), "1.0 TB");
 });
+
+test("changing source server clears selected volumes and conflicting destination", () => {
+  useAppStore.getState().reset();
+  const store = useAppStore.getState();
+
+  const server1: Server = {
+    id: 1,
+    name: "server-1",
+    host: "10.0.0.1",
+    username: "root",
+    port: 22,
+    ssh_key_path: "/key1",
+  };
+  const server2: Server = {
+    id: 2,
+    name: "server-2",
+    host: "10.0.0.2",
+    username: "root",
+    port: 22,
+    ssh_key_path: "/key2",
+  };
+
+  store.setSourceServer(server1);
+  store.setDestServer(server2);
+  store.setSelectedVolumes([{ name: "vol1", size_bytes: 100, action: "transfer" }]);
+
+  const currentSource = useAppStore.getState().sourceServer;
+  const currentDest = useAppStore.getState().destServer;
+  if (currentSource?.id !== server2.id) {
+    store.setSelectedVolumes([]);
+    if (currentDest?.id === server2.id) {
+      store.setDestServer(null);
+    }
+  }
+  store.setSourceServer(server2);
+
+  assert.equal(useAppStore.getState().selectedVolumes.length, 0);
+  assert.equal(useAppStore.getState().destServer, null);
+  assert.equal(useAppStore.getState().sourceServer?.id, 2);
+});

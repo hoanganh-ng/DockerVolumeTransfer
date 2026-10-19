@@ -6,8 +6,16 @@ import { ServerCard, AddServerModal, PassphraseModal } from "../servers";
 import type { Server } from "../../types";
 
 export function SelectSource() {
-  const { servers, setServers, sourceServer, setSourceServer, setStep } =
-    useAppStore();
+  const {
+    servers,
+    setServers,
+    sourceServer,
+    setSourceServer,
+    destServer,
+    setDestServer,
+    setSelectedVolumes,
+    setStep,
+  } = useAppStore();
 
   const [onlineMap, setOnlineMap] = useState<Record<number, boolean>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -82,6 +90,13 @@ export function SelectSource() {
         passphrase: passphrase.trim() ? passphrase : null,
         role: "source",
       });
+
+      if (sourceServer?.id !== activeServerForPassphrase.id) {
+        setSelectedVolumes([]);
+        if (destServer?.id === activeServerForPassphrase.id) {
+          setDestServer(null);
+        }
+      }
 
       setSourceServer(activeServerForPassphrase);
       setActiveServerForPassphrase(null);

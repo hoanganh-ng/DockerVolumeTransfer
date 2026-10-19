@@ -261,6 +261,13 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_du_output_zero() {
+        let output = "0\t/data\n";
+        let size = parse_du_output(output).unwrap();
+        assert_eq!(size, 0);
+    }
+
+    #[test]
     fn test_parse_du_output() {
         assert_eq!(parse_du_output("104857600\t/data\n").unwrap(), 104857600);
         assert_eq!(parse_du_output("0\t/data\n").unwrap(), 0);

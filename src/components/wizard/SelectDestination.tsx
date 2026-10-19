@@ -148,7 +148,7 @@ export function SelectDestination() {
   };
 
   const handleStartTransfer = async () => {
-    if (!destServer) return;
+    if (!destServer || selectedVolumes.length === 0) return;
 
     setIsCheckingConflicts(true);
     setConflictError("");
@@ -343,7 +343,12 @@ export function SelectDestination() {
         <button
           type="button"
           onClick={handleStartTransfer}
-          disabled={!destServer || isCheckingConflicts || isConnectingDest}
+          disabled={
+            !destServer ||
+            selectedVolumes.length === 0 ||
+            isCheckingConflicts ||
+            isConnectingDest
+          }
           className="flex items-center space-x-2 px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-800 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg border border-transparent shadow-sm transition-colors"
         >
           {isCheckingConflicts ? (
