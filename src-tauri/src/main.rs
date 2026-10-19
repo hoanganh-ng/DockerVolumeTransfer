@@ -21,6 +21,8 @@ fn main() {
                 handle.manage(pool);
             });
             app.manage(ssh::SessionRegistry::new());
+            app.manage(commands::transfer::CancellationToken::default());
+            app.manage(commands::transfer::ActiveContainers::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -35,6 +37,9 @@ fn main() {
             commands::volume::list_volumes,
             commands::volume::get_volume_size,
             commands::volume::check_volumes_on_dest,
+            commands::transfer::start_transfer,
+            commands::transfer::cancel_transfer,
+            commands::transfer::list_transfer_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
