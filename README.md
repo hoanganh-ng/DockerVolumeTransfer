@@ -99,7 +99,7 @@ chmod +x "Docker Volume Transfer_0.1.0_amd64.AppImage"
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/vi0l3tsc0rpi0n/DockerVolumeTransfer.git
+   git clone https://github.com/hoanganh-ng/DockerVolumeTransfer.git
    cd DockerVolumeTransfer
    ```
 
