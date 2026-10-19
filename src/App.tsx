@@ -4,6 +4,8 @@ import { StepIndicator } from "./components/wizard/StepIndicator";
 import { SelectSource } from "./components/wizard/SelectSource";
 import { SelectVolumes } from "./components/wizard/SelectVolumes";
 import { SelectDestination } from "./components/wizard/SelectDestination";
+import { TransferProgress } from "./components/wizard/TransferProgress";
+import { TransferComplete } from "./components/wizard/TransferComplete";
 
 export default function App() {
   const { step, showHistory, setShowHistory } = useAppStore();
@@ -73,26 +75,8 @@ export default function App() {
               {step === 1 && <SelectSource />}
               {step === 2 && <SelectVolumes />}
               {step === 3 && <SelectDestination />}
-              {step === 4 && (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 border border-dashed border-slate-800 rounded-xl p-12">
-                  <div className="text-lg font-medium text-slate-200 mb-1">
-                    Step 4: Transfer Progress
-                  </div>
-                  <p className="text-sm text-slate-500">
-                    TransferProgress placeholder (Task 8)
-                  </p>
-                </div>
-              )}
-              {step === 5 && (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 border border-dashed border-slate-800 rounded-xl p-12">
-                  <div className="text-lg font-medium text-slate-200 mb-1">
-                    Step 5: Transfer Complete
-                  </div>
-                  <p className="text-sm text-slate-500">
-                    TransferComplete placeholder (Task 8)
-                  </p>
-                </div>
-              )}
+              {step === 4 && <TransferProgress />}
+              {step === 5 && <TransferComplete />}
             </div>
           </div>
         )}

@@ -4,4 +4,7 @@ export { SelectVolumes } from "./SelectVolumes";
 export { SelectDestination } from "./SelectDestination";
 export { ConflictModal } from "./ConflictModal";
 export type { ConflictModalProps } from "./ConflictModal";
+export { TransferProgress } from "./TransferProgress";
+export { TransferComplete } from "./TransferComplete";
+export { VolumeProgressCard } from "./VolumeProgressCard";
 export * from "./wizardUtils";
