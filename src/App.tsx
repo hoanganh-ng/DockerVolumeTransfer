@@ -1,6 +1,9 @@
 import { History } from "lucide-react";
 import { useAppStore } from "./store";
 import { StepIndicator } from "./components/wizard/StepIndicator";
+import { SelectSource } from "./components/wizard/SelectSource";
+import { SelectVolumes } from "./components/wizard/SelectVolumes";
+import { SelectDestination } from "./components/wizard/SelectDestination";
 
 export default function App() {
   const { step, showHistory, setShowHistory } = useAppStore();
@@ -67,36 +70,9 @@ export default function App() {
             <StepIndicator currentStep={step} />
 
             <div className="flex-1 max-w-5xl w-full mx-auto px-6 pb-8 flex flex-col">
-              {step === 1 && (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 border border-dashed border-slate-800 rounded-xl p-12">
-                  <div className="text-lg font-medium text-slate-200 mb-1">
-                    Step 1: Select Source Server
-                  </div>
-                  <p className="text-sm text-slate-500">
-                    SelectSource placeholder (Task 7)
-                  </p>
-                </div>
-              )}
-              {step === 2 && (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 border border-dashed border-slate-800 rounded-xl p-12">
-                  <div className="text-lg font-medium text-slate-200 mb-1">
-                    Step 2: Select Volumes
-                  </div>
-                  <p className="text-sm text-slate-500">
-                    SelectVolumes placeholder (Task 7)
-                  </p>
-                </div>
-              )}
-              {step === 3 && (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 border border-dashed border-slate-800 rounded-xl p-12">
-                  <div className="text-lg font-medium text-slate-200 mb-1">
-                    Step 3: Select Destination Server
-                  </div>
-                  <p className="text-sm text-slate-500">
-                    SelectDestination placeholder (Task 7)
-                  </p>
-                </div>
-              )}
+              {step === 1 && <SelectSource />}
+              {step === 2 && <SelectVolumes />}
+              {step === 3 && <SelectDestination />}
               {step === 4 && (
                 <div className="flex-1 flex flex-col items-center justify-center text-slate-400 border border-dashed border-slate-800 rounded-xl p-12">
                   <div className="text-lg font-medium text-slate-200 mb-1">
