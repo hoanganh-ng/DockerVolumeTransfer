@@ -6,6 +6,7 @@ import { SelectVolumes } from "./components/wizard/SelectVolumes";
 import { SelectDestination } from "./components/wizard/SelectDestination";
 import { TransferProgress } from "./components/wizard/TransferProgress";
 import { TransferComplete } from "./components/wizard/TransferComplete";
+import { TransferHistory } from "./components/history/TransferHistory";
 
 export default function App() {
   const { step, showHistory, setShowHistory } = useAppStore();
@@ -50,23 +51,7 @@ export default function App() {
       {/* Main Body */}
       <main className="flex-1 flex flex-col">
         {showHistory ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-400">
-            <div className="max-w-md text-center p-8 bg-slate-800/50 rounded-xl border border-slate-800">
-              <History className="w-12 h-12 text-slate-500 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold text-slate-200 mb-2">
-                Transfer History
-              </h2>
-              <p className="text-sm text-slate-400 mb-6">
-                History view component placeholder (implemented in Task 9).
-              </p>
-              <button
-                onClick={() => setShowHistory(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium rounded-lg transition-colors border border-slate-700"
-              >
-                Back to Wizard
-              </button>
-            </div>
-          </div>
+          <TransferHistory />
         ) : (
           <div className="flex-1 flex flex-col">
             <StepIndicator currentStep={step} />
