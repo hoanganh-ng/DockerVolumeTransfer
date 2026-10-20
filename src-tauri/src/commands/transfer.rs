@@ -10,6 +10,15 @@ use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 #[derive(Clone, Default)]
+pub struct TransferInProgress(pub Arc<AtomicBool>);
+
+impl TransferInProgress {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct CancellationToken(pub Arc<AtomicBool>);
 
 impl CancellationToken {
@@ -95,6 +104,34 @@ pub fn compute_overall_status(results: &[VolumeResult]) -> &'static str {
     }
 }
 
+/// Fold one channel message into exit-status/stderr state while waiting for a
+/// remote command to finish. Returns true when waiting should stop.
+/// Control messages (Success, WindowAdjusted, Eof, Data) are ignored: they are
+/// queued on the channel during streaming and arrive before ExitStatus.
+pub fn absorb_exit_msg(
+    msg: &russh::ChannelMsg,
+    exit_status: &mut Option<u32>,
+    stderr: &mut String,
+) -> bool {
+    match msg {
+        russh::ChannelMsg::ExitStatus { exit_status: code } => {
+            *exit_status = Some(*code);
+            false
+        }
+        russh::ChannelMsg::ExitSignal { error_message, .. } => {
+            *exit_status = Some(1);
+            stderr.push_str(error_message);
+            false
+        }
+        russh::ChannelMsg::ExtendedData { data, .. } => {
+            stderr.push_str(&String::from_utf8_lossy(data));
+            false
+        }
+        russh::ChannelMsg::Close => true,
+        _ => false,
+    }
+}
+
 async fn cleanup_containers(
     src_session: &crate::ssh::SshSession,
     dst_session: &crate::ssh::SshSession,
@@ -106,6 +143,26 @@ async fn cleanup_containers(
     let _ = crate::ssh::exec(dst_session, &cmd).await;
 }
 
+/// Pull alpine image if not present. Returns Ok(()) or error string.
+async fn ensure_alpine_image(
+    session: &crate::ssh::SshSession,
+    label: &str,
+) -> Result<(), String> {
+    // Check if alpine image exists
+    let (code, _stdout, stderr) =
+        crate::ssh::exec(session, "docker image inspect alpine:latest >/dev/null 2>&1 || docker pull alpine:latest")
+            .await
+            .map_err(|e| format!("{} host: failed to check/pull alpine image: {}", label, e))?;
+    if code != 0 {
+        return Err(format!(
+            "{} host: alpine image not available and pull failed: {}",
+            label,
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_transfer(
     app_handle: tauri::AppHandle,
@@ -114,6 +171,7 @@ async fn run_transfer(
     dst_session: Arc<crate::ssh::SshSession>,
     cancel_token: CancellationToken,
     active_containers: ActiveContainers,
+    transfer_in_progress: TransferInProgress,
     source_server_name: String,
     dest_server_name: String,
     volumes: Vec<TransferVolume>,
@@ -123,6 +181,37 @@ async fn run_transfer(
     let mut total_transferred: u64 = 0;
     let start_time = Instant::now();
     let mut was_cancelled = false;
+
+    // Pre-flight: ensure alpine image is available on both hosts
+    eprintln!("[DVT] Pre-flight: ensuring alpine image on source host...");
+    if let Err(e) = ensure_alpine_image(&src_session, "Source").await {
+        eprintln!("[DVT] Pre-flight failed: {}", e);
+        let _ = app_handle.emit(
+            "transfer-complete",
+            TransferSummary {
+                total_bytes: 0,
+                duration_seconds: 0,
+                volumes: vec![],
+            },
+        );
+        transfer_in_progress.0.store(false, Ordering::SeqCst);
+        return;
+    }
+    eprintln!("[DVT] Pre-flight: ensuring alpine image on dest host...");
+    if let Err(e) = ensure_alpine_image(&dst_session, "Destination").await {
+        eprintln!("[DVT] Pre-flight failed: {}", e);
+        let _ = app_handle.emit(
+            "transfer-complete",
+            TransferSummary {
+                total_bytes: 0,
+                duration_seconds: 0,
+                volumes: vec![],
+            },
+        );
+        transfer_in_progress.0.store(false, Ordering::SeqCst);
+        return;
+    }
+    eprintln!("[DVT] Pre-flight: alpine image OK on both hosts");
 
     for (index, vol) in volumes.iter().enumerate() {
         if was_cancelled || cancel_token.is_cancelled() {
@@ -176,6 +265,8 @@ async fn run_transfer(
 
         let src_cmd = build_source_command(&src_name, &vol.name);
         let dst_cmd = build_dest_command(&dst_name, &vol.name, &vol.action);
+        eprintln!("[DVT] Volume '{}': src_cmd = {}", vol.name, src_cmd);
+        eprintln!("[DVT] Volume '{}': dst_cmd = {}", vol.name, dst_cmd);
 
         let _ = app_handle.emit(
             "transfer-progress",
@@ -248,8 +339,9 @@ async fn run_transfer(
             }
         };
 
+        eprintln!("[DVT] Executing source command on source host...");
         if let Err(e) = src_channel.exec(true, src_cmd.as_str()).await {
-            let err_msg = format!("Failed to exec source command: {}", e);
+            let err_msg = format!("Failed to exec source command: {} | cmd: {}", e, src_cmd);
             cleanup_containers(&src_session, &dst_session, &src_name, &dst_name).await;
             active_containers.remove(&src_name);
             active_containers.remove(&dst_name);
@@ -273,8 +365,9 @@ async fn run_transfer(
             continue;
         }
 
+        eprintln!("[DVT] Executing dest command on dest host...");
         if let Err(e) = dest_channel.exec(true, dst_cmd.as_str()).await {
-            let err_msg = format!("Failed to exec destination command: {}", e);
+            let err_msg = format!("Failed to exec destination command: {} | cmd: {}", e, dst_cmd);
             cleanup_containers(&src_session, &dst_session, &src_name, &dst_name).await;
             active_containers.remove(&src_name);
             active_containers.remove(&dst_name);
@@ -313,61 +406,58 @@ async fn run_transfer(
                 break;
             }
 
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    if cancel_token.is_cancelled() {
-                        was_cancelled = true;
+            match src_channel.wait().await {
+                Some(russh::ChannelMsg::Data { data }) => {
+                    if bytes_transferred == 0 {
+                        eprintln!("[DVT] First data chunk received: {} bytes", data.len());
+                    }
+                    if let Err(e) = dest_channel.data(&data[..]).await {
+                        stream_err = Some(format!("Failed to write to destination channel: {}", e));
                         break;
                     }
-                }
-                msg = src_channel.wait() => {
-                    match msg {
-                        Some(russh::ChannelMsg::Data { data }) => {
-                            if let Err(e) = dest_channel.data(&data[..]).await {
-                                stream_err = Some(format!("Failed to write to destination channel: {}", e));
-                                break;
-                            }
-                            bytes_transferred += data.len() as u64;
+                    bytes_transferred += data.len() as u64;
 
-                            let now = Instant::now();
-                            let elapsed = now.duration_since(last_progress_time);
-                            if elapsed >= Duration::from_millis(500) {
-                                let delta_bytes = bytes_transferred.saturating_sub(last_progress_bytes);
-                                let millis = elapsed.as_millis().max(1);
-                                let speed_bps = ((delta_bytes as u128 * 1000) / millis) as u64;
-                                let _ = app_handle.emit(
-                                    "transfer-progress",
-                                    TransferEvent {
-                                        volume_name: vol.name.clone(),
-                                        status: "in_progress".to_string(),
-                                        bytes_transferred,
-                                        total_bytes: vol.size_bytes,
-                                        speed_bps,
-                                    },
-                                );
-                                last_progress_time = now;
-                                last_progress_bytes = bytes_transferred;
-                            }
-                        }
-                        Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                            src_stderr.push_str(&String::from_utf8_lossy(&data));
-                        }
-                        Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                            src_exit_status = Some(exit_status);
-                        }
-                        Some(russh::ChannelMsg::ExitSignal { error_message, .. }) => {
-                            src_exit_status = Some(1);
-                            src_stderr.push_str(&error_message);
-                        }
-                        Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) => {
-                            break;
-                        }
-                        None => {
-                            break;
-                        }
-                        _ => {}
+                    let now = Instant::now();
+                    let elapsed = now.duration_since(last_progress_time);
+                    if elapsed >= Duration::from_millis(500) {
+                        let delta_bytes = bytes_transferred.saturating_sub(last_progress_bytes);
+                        let millis = elapsed.as_millis().max(1);
+                        let speed_bps = ((delta_bytes as u128 * 1000) / millis) as u64;
+                        let _ = app_handle.emit(
+                            "transfer-progress",
+                            TransferEvent {
+                                volume_name: vol.name.clone(),
+                                status: "in_progress".to_string(),
+                                bytes_transferred,
+                                total_bytes: vol.size_bytes,
+                                speed_bps,
+                            },
+                        );
+                        last_progress_time = now;
+                        last_progress_bytes = bytes_transferred;
                     }
                 }
+                Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
+                    let text = String::from_utf8_lossy(&data);
+                    eprintln!("[DVT] Source stderr: {}", text.trim());
+                    src_stderr.push_str(&text);
+                }
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    src_exit_status = Some(exit_status);
+                }
+                Some(russh::ChannelMsg::ExitSignal { error_message, .. }) => {
+                    src_exit_status = Some(1);
+                    src_stderr.push_str(&error_message);
+                }
+                Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) => {
+                    eprintln!("[DVT] Source channel EOF/Close after {} bytes", bytes_transferred);
+                    break;
+                }
+                None => {
+                    eprintln!("[DVT] Source channel returned None (disconnected)");
+                    break;
+                }
+                _ => {}
             }
         }
 
@@ -422,26 +512,22 @@ async fn run_transfer(
         // Stage 2: Check src exit
         while src_exit_status.is_none() {
             match tokio::time::timeout(Duration::from_secs(5), src_channel.wait()).await {
-                Ok(Some(russh::ChannelMsg::ExitStatus { exit_status })) => {
-                    src_exit_status = Some(exit_status);
-                }
-                Ok(Some(russh::ChannelMsg::ExitSignal { error_message, .. })) => {
-                    src_exit_status = Some(1);
-                    src_stderr.push_str(&error_message);
-                }
-                Ok(Some(russh::ChannelMsg::ExtendedData { data, .. })) => {
-                    src_stderr.push_str(&String::from_utf8_lossy(&data));
+                Ok(Some(msg)) => {
+                    if absorb_exit_msg(&msg, &mut src_exit_status, &mut src_stderr) {
+                        break;
+                    }
                 }
                 _ => break,
             }
         }
 
         let src_code = src_exit_status.unwrap_or(1);
+        eprintln!("[DVT] Source exit code: {}, stderr: '{}', bytes: {}", src_code, src_stderr.trim(), bytes_transferred);
         if src_code != 0 {
             let err_msg = if src_stderr.trim().is_empty() {
-                format!("Source container exited with code {}", src_code)
+                format!("Source container exited with code {} | cmd: {}", src_code, src_cmd)
             } else {
-                src_stderr.trim().to_string()
+                format!("{} (exit code {})", src_stderr.trim(), src_code)
             };
             cleanup_containers(&src_session, &dst_session, &src_name, &dst_name).await;
             active_containers.remove(&src_name);
@@ -472,20 +558,11 @@ async fn run_transfer(
         // Stage 4: Check dest exit
         while dest_exit_status.is_none() {
             match tokio::time::timeout(Duration::from_secs(30), dest_channel.wait()).await {
-                Ok(Some(russh::ChannelMsg::ExitStatus { exit_status })) => {
-                    dest_exit_status = Some(exit_status);
+                Ok(Some(msg)) => {
+                    if absorb_exit_msg(&msg, &mut dest_exit_status, &mut dest_stderr) {
+                        break;
+                    }
                 }
-                Ok(Some(russh::ChannelMsg::ExitSignal { error_message, .. })) => {
-                    dest_exit_status = Some(1);
-                    dest_stderr.push_str(&error_message);
-                }
-                Ok(Some(russh::ChannelMsg::ExtendedData { data, .. })) => {
-                    dest_stderr.push_str(&String::from_utf8_lossy(&data));
-                }
-                Ok(Some(russh::ChannelMsg::Close)) => {
-                    break;
-                }
-                Ok(Some(russh::ChannelMsg::Eof)) => {}
                 _ => break,
             }
         }
@@ -494,11 +571,12 @@ async fn run_transfer(
         active_containers.remove(&dst_name);
 
         let dest_code = dest_exit_status.unwrap_or(1);
+        eprintln!("[DVT] Dest exit code: {}, stderr: '{}'", dest_code, dest_stderr.trim());
         if dest_code != 0 {
             let err_msg = if dest_stderr.trim().is_empty() {
-                format!("Destination container exited with code {}", dest_code)
+                format!("Destination container exited with code {} | cmd: {}", dest_code, dst_cmd)
             } else {
-                dest_stderr.trim().to_string()
+                format!("{} (exit code {})", dest_stderr.trim(), dest_code)
             };
             cleanup_containers(&src_session, &dst_session, &src_name, &dst_name).await;
             let _ = app_handle.emit(
@@ -550,6 +628,8 @@ async fn run_transfer(
     };
     let _ = app_handle.emit("transfer-complete", &summary);
 
+    transfer_in_progress.0.store(false, Ordering::SeqCst);
+
     let overall_status = compute_overall_status(&results);
     let volume_names: Vec<String> = results.iter().map(|r| r.name.clone()).collect();
     let _ = crate::db::save_transfer_record(
@@ -572,22 +652,35 @@ pub async fn start_transfer(
     registry: tauri::State<'_, SessionRegistry>,
     cancel_token: tauri::State<'_, CancellationToken>,
     active_containers: tauri::State<'_, ActiveContainers>,
+    transfer_in_progress: tauri::State<'_, TransferInProgress>,
     source_server_name: String,
     dest_server_name: String,
     volumes: Vec<TransferVolume>,
 ) -> Result<(), String> {
+    // Reject if a transfer is already running
+    if transfer_in_progress.0.swap(true, Ordering::SeqCst) {
+        return Err("A transfer is already in progress".to_string());
+    }
+
     let src_session = registry
         .get("source")
-        .ok_or_else(|| "No active SSH session for role: source".to_string())?;
+        .ok_or_else(|| {
+            transfer_in_progress.0.store(false, Ordering::SeqCst);
+            "No active SSH session for role: source".to_string()
+        })?;
     let dst_session = registry
         .get("destination")
-        .ok_or_else(|| "No active SSH session for role: destination".to_string())?;
+        .ok_or_else(|| {
+            transfer_in_progress.0.store(false, Ordering::SeqCst);
+            "No active SSH session for role: destination".to_string()
+        })?;
 
     cancel_token.reset();
 
     let pool = (*pool).clone();
     let cancel = cancel_token.inner().clone();
     let containers = active_containers.inner().clone();
+    let in_progress = transfer_in_progress.inner().clone();
 
     tokio::spawn(async move {
         run_transfer(
@@ -597,6 +690,7 @@ pub async fn start_transfer(
             dst_session,
             cancel,
             containers,
+            in_progress,
             source_server_name,
             dest_server_name,
             volumes,
@@ -763,5 +857,63 @@ mod tests {
         assert_eq!(TransferStatus::Failed("err".to_string()).as_str(), "failed");
         assert_eq!(TransferStatus::Skipped.as_str(), "skipped");
         assert_eq!(TransferStatus::Cancelled.as_str(), "cancelled");
+    }
+
+    fn drain(msgs: Vec<russh::ChannelMsg>) -> (Option<u32>, String) {
+        let mut status = None;
+        let mut stderr = String::new();
+        for msg in &msgs {
+            if absorb_exit_msg(msg, &mut status, &mut stderr) || status.is_some() {
+                break;
+            }
+        }
+        (status, stderr)
+    }
+
+    #[test]
+    fn test_absorb_exit_msg_skips_success_and_window_adjust() {
+        let (status, _) = drain(vec![
+            russh::ChannelMsg::Success,
+            russh::ChannelMsg::WindowAdjusted { new_size: 1024 },
+            russh::ChannelMsg::Eof,
+            russh::ChannelMsg::ExitStatus { exit_status: 0 },
+            russh::ChannelMsg::Close,
+        ]);
+        assert_eq!(status, Some(0));
+    }
+
+    #[test]
+    fn test_absorb_exit_msg_collects_stderr() {
+        let (status, stderr) = drain(vec![
+            russh::ChannelMsg::ExtendedData {
+                data: russh::CryptoVec::from_slice(b"tar: bad header"),
+                ext: 1,
+            },
+            russh::ChannelMsg::ExitStatus { exit_status: 2 },
+        ]);
+        assert_eq!(status, Some(2));
+        assert_eq!(stderr, "tar: bad header");
+    }
+
+    #[test]
+    fn test_absorb_exit_msg_stops_on_close_without_status() {
+        let (status, _) = drain(vec![
+            russh::ChannelMsg::Success,
+            russh::ChannelMsg::Close,
+            russh::ChannelMsg::ExitStatus { exit_status: 0 },
+        ]);
+        assert_eq!(status, None);
+    }
+
+    #[test]
+    fn test_absorb_exit_msg_exit_signal_is_failure() {
+        let (status, stderr) = drain(vec![russh::ChannelMsg::ExitSignal {
+            signal_name: russh::Sig::KILL,
+            core_dumped: false,
+            error_message: "killed".to_string(),
+            lang_tag: String::new(),
+        }]);
+        assert_eq!(status, Some(1));
+        assert_eq!(stderr, "killed");
     }
 }

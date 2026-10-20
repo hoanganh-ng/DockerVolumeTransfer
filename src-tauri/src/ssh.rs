@@ -176,7 +176,10 @@ pub async fn connect(
         }
     };
 
-    let config = Arc::new(russh::client::Config::default());
+    let mut config = russh::client::Config::default();
+    config.window_size = 16 * 1024 * 1024; // 16 MB window for large volume transfers
+    config.maximum_packet_size = 256 * 1024; // 256 KB packets
+    let config = Arc::new(config);
     let server_fingerprint = Arc::new(Mutex::new(None));
     let handler = ClientHandler {
         server_fingerprint: Arc::clone(&server_fingerprint),

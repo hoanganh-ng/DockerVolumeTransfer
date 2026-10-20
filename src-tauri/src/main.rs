@@ -23,6 +23,7 @@ fn main() {
             app.manage(ssh::SessionRegistry::new());
             app.manage(commands::transfer::CancellationToken::default());
             app.manage(commands::transfer::ActiveContainers::default());
+            app.manage(commands::transfer::TransferInProgress::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
