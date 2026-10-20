@@ -9,6 +9,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
+/// Debug-build-only trace output; release builds stay quiet.
+macro_rules! dvt_debug {
+    ($($arg:tt)*) => {
+        if cfg!(debug_assertions) {
+            eprintln!("[DVT] {}", format_args!($($arg)*));
+        }
+    };
+}
+
 #[derive(Clone, Default)]
 pub struct TransferInProgress(pub Arc<AtomicBool>);
 
@@ -260,8 +269,8 @@ async fn run_transfer(
 
         let src_cmd = build_source_command(&src_name, &vol.name);
         let dst_cmd = build_dest_command(&dst_name, &vol.name, &vol.action);
-        eprintln!("[DVT] Volume '{}': src_cmd = {}", vol.name, src_cmd);
-        eprintln!("[DVT] Volume '{}': dst_cmd = {}", vol.name, dst_cmd);
+        dvt_debug!("Volume '{}': src_cmd = {}", vol.name, src_cmd);
+        dvt_debug!("Volume '{}': dst_cmd = {}", vol.name, dst_cmd);
 
         let _ = app_handle.emit(
             "transfer-progress",
@@ -334,9 +343,9 @@ async fn run_transfer(
             }
         };
 
-        eprintln!("[DVT] Executing source command on source host...");
+        dvt_debug!("Executing source command on source host...");
         if let Err(e) = src_channel.exec(true, src_cmd.as_str()).await {
-            let err_msg = format!("Failed to exec source command: {} | cmd: {}", e, src_cmd);
+            let err_msg = format!("Failed to exec source command: {}", e);
             cleanup_containers(&src_session, &dst_session, &src_name, &dst_name).await;
             active_containers.remove(&src_name);
             active_containers.remove(&dst_name);
@@ -360,9 +369,9 @@ async fn run_transfer(
             continue;
         }
 
-        eprintln!("[DVT] Executing dest command on dest host...");
+        dvt_debug!("Executing dest command on dest host...");
         if let Err(e) = dest_channel.exec(true, dst_cmd.as_str()).await {
-            let err_msg = format!("Failed to exec destination command: {} | cmd: {}", e, dst_cmd);
+            let err_msg = format!("Failed to exec destination command: {}", e);
             cleanup_containers(&src_session, &dst_session, &src_name, &dst_name).await;
             active_containers.remove(&src_name);
             active_containers.remove(&dst_name);
@@ -408,7 +417,7 @@ async fn run_transfer(
             match msg {
                 Some(russh::ChannelMsg::Data { data }) => {
                     if bytes_transferred == 0 {
-                        eprintln!("[DVT] First data chunk received: {} bytes", data.len());
+                        dvt_debug!("First data chunk received: {} bytes", data.len());
                     }
                     if let Err(e) = dest_channel.data(&data[..]).await {
                         stream_err = Some(format!("Failed to write to destination channel: {}", e));
@@ -438,7 +447,7 @@ async fn run_transfer(
                 }
                 Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
                     let text = String::from_utf8_lossy(&data);
-                    eprintln!("[DVT] Source stderr: {}", text.trim());
+                    dvt_debug!("Source stderr: {}", text.trim());
                     src_stderr.push_str(&text);
                 }
                 Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
@@ -449,11 +458,11 @@ async fn run_transfer(
                     src_stderr.push_str(&error_message);
                 }
                 Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) => {
-                    eprintln!("[DVT] Source channel EOF/Close after {} bytes", bytes_transferred);
+                    dvt_debug!("Source channel EOF/Close after {} bytes", bytes_transferred);
                     break;
                 }
                 None => {
-                    eprintln!("[DVT] Source channel returned None (disconnected)");
+                    dvt_debug!("Source channel returned None (disconnected)");
                     break;
                 }
                 _ => {}
@@ -521,10 +530,10 @@ async fn run_transfer(
         }
 
         let src_code = src_exit_status.unwrap_or(1);
-        eprintln!("[DVT] Source exit code: {}, stderr: '{}', bytes: {}", src_code, src_stderr.trim(), bytes_transferred);
+        dvt_debug!("Source exit code: {}, stderr: '{}', bytes: {}", src_code, src_stderr.trim(), bytes_transferred);
         if src_code != 0 {
             let err_msg = if src_stderr.trim().is_empty() {
-                format!("Source container exited with code {} | cmd: {}", src_code, src_cmd)
+                format!("Source container exited with code {}", src_code)
             } else {
                 format!("{} (exit code {})", src_stderr.trim(), src_code)
             };
@@ -570,10 +579,10 @@ async fn run_transfer(
         active_containers.remove(&dst_name);
 
         let dest_code = dest_exit_status.unwrap_or(1);
-        eprintln!("[DVT] Dest exit code: {}, stderr: '{}'", dest_code, dest_stderr.trim());
+        dvt_debug!("Dest exit code: {}, stderr: '{}'", dest_code, dest_stderr.trim());
         if dest_code != 0 {
             let err_msg = if dest_stderr.trim().is_empty() {
-                format!("Destination container exited with code {} | cmd: {}", dest_code, dst_cmd)
+                format!("Destination container exited with code {}", dest_code)
             } else {
                 format!("{} (exit code {})", dest_stderr.trim(), dest_code)
             };
