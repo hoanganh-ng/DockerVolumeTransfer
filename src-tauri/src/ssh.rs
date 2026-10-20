@@ -138,6 +138,16 @@ impl SessionRegistry {
     }
 }
 
+pub fn client_config() -> russh::client::Config {
+    let mut config = russh::client::Config::default();
+    config.window_size = 16 * 1024 * 1024; // 16 MB window for large volume transfers
+    // Must stay well under russh's 256 KiB incoming packet limit: the server may
+    // fill this with channel data and framing goes on top, and an oversized
+    // packet kills the whole session mid-transfer.
+    config.maximum_packet_size = 32 * 1024;
+    config
+}
+
 pub async fn connect(
     host: &str,
     port: u16,
@@ -176,10 +186,7 @@ pub async fn connect(
         }
     };
 
-    let mut config = russh::client::Config::default();
-    config.window_size = 16 * 1024 * 1024; // 16 MB window for large volume transfers
-    config.maximum_packet_size = 256 * 1024; // 256 KB packets
-    let config = Arc::new(config);
+    let config = Arc::new(client_config());
     let server_fingerprint = Arc::new(Mutex::new(None));
     let handler = ClientHandler {
         server_fingerprint: Arc::clone(&server_fingerprint),
@@ -347,6 +354,18 @@ mod tests {
         assert_eq!(err, format!("Cannot connect to 127.0.0.1:{} \u{2014} server unreachable", port));
 
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[test]
+    fn test_client_config_packets_fit_russh_limit() {
+        // russh 0.45 drops the session on any incoming packet over 256 KiB
+        // (cipher::MAXIMUM_PACKET_LEN). The server may fill maximum_packet_size
+        // with channel data, and SSH framing (headers, padding, MAC) adds to it.
+        const RUSSH_MAX_PACKET_LEN: u32 = 256 * 1024;
+        const FRAMING_HEADROOM: u32 = 1024;
+        let config = client_config();
+        assert!(config.maximum_packet_size + FRAMING_HEADROOM <= RUSSH_MAX_PACKET_LEN);
+        assert_eq!(config.window_size, 16 * 1024 * 1024);
     }
 
     #[test]
