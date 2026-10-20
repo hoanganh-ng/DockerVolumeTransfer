@@ -616,15 +616,9 @@ async fn run_transfer(
     }
 
     let total_duration = start_time.elapsed().as_secs();
-    let summary = TransferSummary {
-        volumes: results.clone(),
-        total_bytes: total_transferred,
-        duration_seconds: total_duration,
-    };
-    let _ = app_handle.emit("transfer-complete", &summary);
-
     let overall_status = compute_overall_status(&results);
     let volume_names: Vec<String> = results.iter().map(|r| r.name.clone()).collect();
+    // Persist first so History is up to date when the UI reacts to transfer-complete
     let _ = crate::db::save_transfer_record(
         &pool,
         &source_server_name,
@@ -635,6 +629,13 @@ async fn run_transfer(
         overall_status,
     )
     .await;
+
+    let summary = TransferSummary {
+        volumes: results,
+        total_bytes: total_transferred,
+        duration_seconds: total_duration,
+    };
+    let _ = app_handle.emit("transfer-complete", &summary);
 }
 
 #[allow(clippy::too_many_arguments)]
