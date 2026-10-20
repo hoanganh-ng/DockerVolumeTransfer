@@ -18,6 +18,27 @@ impl TransferInProgress {
     }
 }
 
+/// Holds the in-progress flag for one transfer; clears it on drop, including
+/// when the transfer task panics or `start_transfer` returns early.
+pub struct InProgressGuard(TransferInProgress);
+
+impl InProgressGuard {
+    /// Returns None if a transfer is already running.
+    pub fn acquire(flag: &TransferInProgress) -> Option<Self> {
+        if flag.0.swap(true, Ordering::SeqCst) {
+            None
+        } else {
+            Some(Self(flag.clone()))
+        }
+    }
+}
+
+impl Drop for InProgressGuard {
+    fn drop(&mut self) {
+        self.0 .0.store(false, Ordering::SeqCst);
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct CancellationToken(pub Arc<AtomicBool>);
 
@@ -171,7 +192,7 @@ async fn run_transfer(
     dst_session: Arc<crate::ssh::SshSession>,
     cancel_token: CancellationToken,
     active_containers: ActiveContainers,
-    transfer_in_progress: TransferInProgress,
+    _guard: InProgressGuard,
     source_server_name: String,
     dest_server_name: String,
     volumes: Vec<TransferVolume>,
@@ -194,7 +215,6 @@ async fn run_transfer(
                 volumes: vec![],
             },
         );
-        transfer_in_progress.0.store(false, Ordering::SeqCst);
         return;
     }
     eprintln!("[DVT] Pre-flight: ensuring alpine image on dest host...");
@@ -208,7 +228,6 @@ async fn run_transfer(
                 volumes: vec![],
             },
         );
-        transfer_in_progress.0.store(false, Ordering::SeqCst);
         return;
     }
     eprintln!("[DVT] Pre-flight: alpine image OK on both hosts");
@@ -628,8 +647,6 @@ async fn run_transfer(
     };
     let _ = app_handle.emit("transfer-complete", &summary);
 
-    transfer_in_progress.0.store(false, Ordering::SeqCst);
-
     let overall_status = compute_overall_status(&results);
     let volume_names: Vec<String> = results.iter().map(|r| r.name.clone()).collect();
     let _ = crate::db::save_transfer_record(
@@ -657,30 +674,21 @@ pub async fn start_transfer(
     dest_server_name: String,
     volumes: Vec<TransferVolume>,
 ) -> Result<(), String> {
-    // Reject if a transfer is already running
-    if transfer_in_progress.0.swap(true, Ordering::SeqCst) {
-        return Err("A transfer is already in progress".to_string());
-    }
+    let guard = InProgressGuard::acquire(transfer_in_progress.inner())
+        .ok_or_else(|| "A transfer is already in progress".to_string())?;
 
     let src_session = registry
         .get("source")
-        .ok_or_else(|| {
-            transfer_in_progress.0.store(false, Ordering::SeqCst);
-            "No active SSH session for role: source".to_string()
-        })?;
+        .ok_or_else(|| "No active SSH session for role: source".to_string())?;
     let dst_session = registry
         .get("destination")
-        .ok_or_else(|| {
-            transfer_in_progress.0.store(false, Ordering::SeqCst);
-            "No active SSH session for role: destination".to_string()
-        })?;
+        .ok_or_else(|| "No active SSH session for role: destination".to_string())?;
 
     cancel_token.reset();
 
     let pool = (*pool).clone();
     let cancel = cancel_token.inner().clone();
     let containers = active_containers.inner().clone();
-    let in_progress = transfer_in_progress.inner().clone();
 
     tokio::spawn(async move {
         run_transfer(
@@ -690,7 +698,7 @@ pub async fn start_transfer(
             dst_session,
             cancel,
             containers,
-            in_progress,
+            guard,
             source_server_name,
             dest_server_name,
             volumes,
@@ -915,5 +923,25 @@ mod tests {
         }]);
         assert_eq!(status, Some(1));
         assert_eq!(stderr, "killed");
+    }
+
+    #[test]
+    fn test_in_progress_guard_exclusive_until_dropped() {
+        let flag = TransferInProgress::new();
+        let guard = InProgressGuard::acquire(&flag).expect("first acquire");
+        assert!(InProgressGuard::acquire(&flag).is_none());
+        drop(guard);
+        assert!(InProgressGuard::acquire(&flag).is_some());
+    }
+
+    #[test]
+    fn test_in_progress_guard_released_on_panic() {
+        let flag = TransferInProgress::new();
+        let inner = flag.clone();
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = InProgressGuard::acquire(&inner).unwrap();
+            panic!("transfer task panicked");
+        });
+        assert!(!flag.0.load(Ordering::SeqCst));
     }
 }
