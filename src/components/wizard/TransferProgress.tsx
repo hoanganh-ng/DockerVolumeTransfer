@@ -1,7 +1,6 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, Ban, Loader2, AlertCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "../../store";
 import { VolumeProgressCard } from "../transfer/VolumeProgressCard";
 import {
@@ -9,7 +8,6 @@ import {
   formatSpeed,
 } from "../transfer/transferUtils";
 import { formatBytes } from "./wizardUtils";
-import type { TransferEvent, TransferSummary } from "../../types";
 
 export function TransferProgress() {
   const {
@@ -17,80 +15,34 @@ export function TransferProgress() {
     destServer,
     selectedVolumes,
     transferEvents,
-    setTransferEvent,
-    setTransferSummary,
-    setStep,
+    beginTransfer,
+    setTransferActive,
   } = useAppStore();
 
   const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string>("");
-  const startedRef = useRef(false);
 
-  // Start transfer and listen to Tauri events
+  // Start transfer once. The store guard (not component state) survives
+  // StrictMode's double effect run and navigating to History and back.
   useEffect(() => {
-    let isMounted = true;
-    const cleanupFns: UnlistenFn[] = [];
+    if (!beginTransfer()) return;
 
-    const initTransfer = async () => {
-      try {
-        const progressUnlisten = await listen<TransferEvent>("transfer-progress", (event) => {
-          if (!isMounted) return;
-          setTransferEvent(event.payload.volume_name, event.payload);
-        });
-        if (!isMounted) {
-          progressUnlisten();
-        } else {
-          cleanupFns.push(progressUnlisten);
-        }
-
-        const completeUnlisten = await listen<TransferSummary>("transfer-complete", (event) => {
-          if (!isMounted) return;
-          setTransferSummary(event.payload);
-          setStep(5);
-        });
-        if (!isMounted) {
-          completeUnlisten();
-        } else {
-          cleanupFns.push(completeUnlisten);
-        }
-
-        if (!isMounted) return;
-
-        if (!startedRef.current) {
-          startedRef.current = true;
-          await invoke("start_transfer", {
-            sourceServerName: sourceServer?.name || "",
-            source_server_name: sourceServer?.name || "",
-            destServerName: destServer?.name || "",
-            dest_server_name: destServer?.name || "",
-            volumes: selectedVolumes,
-          });
-        }
-      } catch (err: unknown) {
-        if (!isMounted) return;
-        const msg =
-          typeof err === "string"
-            ? err
-            : (err as Error)?.message || "Failed to start volume transfer";
-        setError(msg);
-      }
-    };
-
-    initTransfer();
-
-    return () => {
-      isMounted = false;
-      cleanupFns.forEach((fn) => fn());
-      cleanupFns.length = 0;
-    };
-  }, [
-    sourceServer?.name,
-    destServer?.name,
-    selectedVolumes,
-    setTransferEvent,
-    setTransferSummary,
-    setStep,
-  ]);
+    invoke("start_transfer", {
+      sourceServerName: sourceServer?.name || "",
+      source_server_name: sourceServer?.name || "",
+      destServerName: destServer?.name || "",
+      dest_server_name: destServer?.name || "",
+      volumes: selectedVolumes,
+    }).catch((err: unknown) => {
+      const msg =
+        typeof err === "string"
+          ? err
+          : (err as Error)?.message || "Failed to start volume transfer";
+      setError(msg);
+      setTransferActive(false);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount only
 
   const handleCancel = async () => {
     const confirmed = window.confirm(

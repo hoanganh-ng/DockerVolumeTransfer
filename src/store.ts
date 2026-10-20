@@ -18,6 +18,7 @@ export interface AppState {
   selectedVolumes: TransferVolume[];
   transferEvents: Map<string, TransferEvent>;
   transferSummary: TransferSummary | null;
+  transferActive: boolean;
   history: TransferRecord[];
   showHistory: boolean;
 
@@ -39,6 +40,8 @@ export interface AppState {
   ) => void;
   setTransferEvent: (volumeName: string, event: TransferEvent) => void;
   setTransferSummary: (summary: TransferSummary | null) => void;
+  setTransferActive: (active: boolean) => void;
+  beginTransfer: () => boolean;
   setHistory: (history: TransferRecord[]) => void;
   setShowHistory: (show: boolean) => void;
   fetchHistory: () => Promise<void>;
@@ -54,6 +57,7 @@ const initialState = {
   selectedVolumes: [],
   transferEvents: new Map<string, TransferEvent>(),
   transferSummary: null,
+  transferActive: false,
   history: [],
   showHistory: false,
 };
@@ -152,6 +156,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   setTransferSummary: (transferSummary) => set({ transferSummary }),
 
+  setTransferActive: (transferActive) => set({ transferActive }),
+
+  beginTransfer: () => {
+    if (get().transferActive) return false;
+    set({ transferActive: true });
+    return true;
+  },
+
   setHistory: (history) => set({ history }),
 
   setShowHistory: (showHistory) => set({ showHistory }),
@@ -174,6 +186,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       selectedVolumes: [],
       transferEvents: new Map(),
       transferSummary: null,
+      transferActive: false,
       showHistory: false,
     });
   },

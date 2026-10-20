@@ -1,5 +1,8 @@
+import { useEffect } from "react";
 import { History } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "./store";
+import type { TransferEvent, TransferSummary } from "./types";
 import { StepIndicator } from "./components/wizard/StepIndicator";
 import { SelectSource } from "./components/wizard/SelectSource";
 import { SelectVolumes } from "./components/wizard/SelectVolumes";
@@ -9,7 +12,34 @@ import { TransferComplete } from "./components/wizard/TransferComplete";
 import { TransferHistory } from "./components/history/TransferHistory";
 
 export default function App() {
-  const { step, showHistory, setShowHistory } = useAppStore();
+  const { step, showHistory, setShowHistory, setTransferEvent, setTransferSummary, setTransferActive, setStep } = useAppStore();
+
+  // Persistent event listeners — survive navigation to history and back
+  useEffect(() => {
+    let mounted = true;
+    const cleanupFns: (() => void)[] = [];
+
+    (async () => {
+      const progressUn = await listen<TransferEvent>("transfer-progress", (event) => {
+        if (!mounted) return;
+        setTransferEvent(event.payload.volume_name, event.payload);
+      });
+      if (!mounted) { progressUn(); } else { cleanupFns.push(progressUn); }
+
+      const completeUn = await listen<TransferSummary>("transfer-complete", (event) => {
+        if (!mounted) return;
+        setTransferSummary(event.payload);
+        setTransferActive(false);
+        setStep(5);
+      });
+      if (!mounted) { completeUn(); } else { cleanupFns.push(completeUn); }
+    })();
+
+    return () => {
+      mounted = false;
+      cleanupFns.forEach((fn) => fn());
+    };
+  }, [setTransferEvent, setTransferSummary, setTransferActive, setStep]);
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col select-none">
