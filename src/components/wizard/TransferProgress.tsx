@@ -15,41 +15,32 @@ export function TransferProgress() {
     destServer,
     selectedVolumes,
     transferEvents,
-    transferActive,
+    beginTransfer,
     setTransferActive,
   } = useAppStore();
 
   const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string>("");
 
-  // Start transfer once when component mounts and no transfer is already running
+  // Start transfer once. The store guard (not component state) survives
+  // StrictMode's double effect run and navigating to History and back.
   useEffect(() => {
-    if (transferActive) return; // already running (e.g. came back from History view)
+    if (!beginTransfer()) return;
 
-    let cancelled = false;
-
-    (async () => {
-      try {
-        setTransferActive(true);
-        await invoke("start_transfer", {
-          sourceServerName: sourceServer?.name || "",
-          source_server_name: sourceServer?.name || "",
-          destServerName: destServer?.name || "",
-          dest_server_name: destServer?.name || "",
-          volumes: selectedVolumes,
-        });
-      } catch (err: unknown) {
-        if (cancelled) return;
-        const msg =
-          typeof err === "string"
-            ? err
-            : (err as Error)?.message || "Failed to start volume transfer";
-        setError(msg);
-        setTransferActive(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
+    invoke("start_transfer", {
+      sourceServerName: sourceServer?.name || "",
+      source_server_name: sourceServer?.name || "",
+      destServerName: destServer?.name || "",
+      dest_server_name: destServer?.name || "",
+      volumes: selectedVolumes,
+    }).catch((err: unknown) => {
+      const msg =
+        typeof err === "string"
+          ? err
+          : (err as Error)?.message || "Failed to start volume transfer";
+      setError(msg);
+      setTransferActive(false);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run once on mount only
 

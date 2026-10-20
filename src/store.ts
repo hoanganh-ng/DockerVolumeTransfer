@@ -41,6 +41,7 @@ export interface AppState {
   setTransferEvent: (volumeName: string, event: TransferEvent) => void;
   setTransferSummary: (summary: TransferSummary | null) => void;
   setTransferActive: (active: boolean) => void;
+  beginTransfer: () => boolean;
   setHistory: (history: TransferRecord[]) => void;
   setShowHistory: (show: boolean) => void;
   fetchHistory: () => Promise<void>;
@@ -156,6 +157,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setTransferSummary: (transferSummary) => set({ transferSummary }),
 
   setTransferActive: (transferActive) => set({ transferActive }),
+
+  beginTransfer: () => {
+    if (get().transferActive) return false;
+    set({ transferActive: true });
+    return true;
+  },
 
   setHistory: (history) => set({ history }),
 

@@ -160,3 +160,13 @@ test("useAppStore history toggle and reset", () => {
   assert.equal(resetState.transferEvents.size, 0);
   assert.equal(resetState.transferSummary, null);
 });
+
+test("beginTransfer succeeds once until transfer ends", () => {
+  useAppStore.getState().reset();
+  assert.equal(useAppStore.getState().beginTransfer(), true);
+  assert.equal(useAppStore.getState().transferActive, true);
+  assert.equal(useAppStore.getState().beginTransfer(), false);
+  useAppStore.getState().setTransferActive(false);
+  assert.equal(useAppStore.getState().beginTransfer(), true);
+  useAppStore.getState().reset();
+});
