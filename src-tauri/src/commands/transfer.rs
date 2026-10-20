@@ -401,7 +401,11 @@ async fn run_transfer(
                 break;
             }
 
-            match src_channel.wait().await {
+            let msg = tokio::select! {
+                msg = src_channel.wait() => msg,
+                _ = tokio::time::sleep(Duration::from_millis(250)) => continue,
+            };
+            match msg {
                 Some(russh::ChannelMsg::Data { data }) => {
                     if bytes_transferred == 0 {
                         eprintln!("[DVT] First data chunk received: {} bytes", data.len());
