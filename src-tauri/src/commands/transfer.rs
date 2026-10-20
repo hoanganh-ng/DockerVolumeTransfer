@@ -184,6 +184,11 @@ async fn ensure_alpine_image(
     Ok(())
 }
 
+/// True when at least one volume will run helper containers.
+pub fn needs_helper_image(volumes: &[TransferVolume]) -> bool {
+    volumes.iter().any(|v| v.action != "skip")
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_transfer(
     app_handle: tauri::AppHandle,
@@ -202,35 +207,6 @@ async fn run_transfer(
     let mut total_transferred: u64 = 0;
     let start_time = Instant::now();
     let mut was_cancelled = false;
-
-    // Pre-flight: ensure alpine image is available on both hosts
-    eprintln!("[DVT] Pre-flight: ensuring alpine image on source host...");
-    if let Err(e) = ensure_alpine_image(&src_session, "Source").await {
-        eprintln!("[DVT] Pre-flight failed: {}", e);
-        let _ = app_handle.emit(
-            "transfer-complete",
-            TransferSummary {
-                total_bytes: 0,
-                duration_seconds: 0,
-                volumes: vec![],
-            },
-        );
-        return;
-    }
-    eprintln!("[DVT] Pre-flight: ensuring alpine image on dest host...");
-    if let Err(e) = ensure_alpine_image(&dst_session, "Destination").await {
-        eprintln!("[DVT] Pre-flight failed: {}", e);
-        let _ = app_handle.emit(
-            "transfer-complete",
-            TransferSummary {
-                total_bytes: 0,
-                duration_seconds: 0,
-                volumes: vec![],
-            },
-        );
-        return;
-    }
-    eprintln!("[DVT] Pre-flight: alpine image OK on both hosts");
 
     for (index, vol) in volumes.iter().enumerate() {
         if was_cancelled || cancel_token.is_cancelled() {
@@ -684,6 +660,12 @@ pub async fn start_transfer(
         .get("destination")
         .ok_or_else(|| "No active SSH session for role: destination".to_string())?;
 
+    // Pre-flight: pull the helper image up front so failures reach the UI as an error
+    if needs_helper_image(&volumes) {
+        ensure_alpine_image(&src_session, "Source").await?;
+        ensure_alpine_image(&dst_session, "Destination").await?;
+    }
+
     cancel_token.reset();
 
     let pool = (*pool).clone();
@@ -923,6 +905,19 @@ mod tests {
         }]);
         assert_eq!(status, Some(1));
         assert_eq!(stderr, "killed");
+    }
+
+    #[test]
+    fn test_needs_helper_image() {
+        let vol = |action: &str| TransferVolume {
+            name: "v".to_string(),
+            size_bytes: 1,
+            action: action.to_string(),
+        };
+        assert!(!needs_helper_image(&[]));
+        assert!(!needs_helper_image(&[vol("skip"), vol("skip")]));
+        assert!(needs_helper_image(&[vol("skip"), vol("overwrite")]));
+        assert!(needs_helper_image(&[vol("transfer")]));
     }
 
     #[test]
